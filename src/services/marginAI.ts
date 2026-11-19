@@ -93,9 +93,11 @@ Respond in STRICT JSON with this schema:
     const text = res.response.text();
     const parsed = JSON.parse(text);
 
-    const isLocal = hardware.hasPromptAPI;
-    const mode = isLocal ? 'on_device' : 'in_cloud';
-    const modelName = isLocal ? 'gemini-nano' : 'gemini-2.5-flash';
+    // Read real verified inference source from Firebase AI Logic response
+    const actualSource = (res.response as any)?.inferenceSource;
+    const mode: 'on_device' | 'in_cloud' =
+      actualSource === 'on_device' ? 'on_device' : actualSource === 'in_cloud' ? 'in_cloud' : (hardware.hasPromptAPI ? 'on_device' : 'in_cloud');
+    const modelName = mode === 'on_device' ? 'gemini-nano' : 'gemini-2.5-flash';
 
     await logAIOperation({
       id: `ai-ext-${Date.now()}`,
@@ -194,11 +196,15 @@ export async function analyzeContextConnections(
   try {
     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
     const model = getGenerativeModel(ai, {
-      model: 'gemini-2.5-flash',
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
+      mode: InferenceMode.ONLY_IN_CLOUD,
+      inCloudParams: {
+        model: 'gemini-2.5-flash',
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+        },
       },
+      onDeviceParams: {},
     });
 
     const recordsBrief = records.slice(0, 15).map((r) => ({
@@ -335,8 +341,12 @@ export async function generateRelayBriefing(
   try {
     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
     const model = getGenerativeModel(ai, {
-      model: 'gemini-2.5-flash',
-      generationConfig: { responseMimeType: 'application/json' },
+      mode: InferenceMode.ONLY_IN_CLOUD,
+      inCloudParams: {
+        model: 'gemini-2.5-flash',
+        generationConfig: { responseMimeType: 'application/json' },
+      },
+      onDeviceParams: {},
     });
 
     const prompt = `You are MARGIN's Relay Context Engine.

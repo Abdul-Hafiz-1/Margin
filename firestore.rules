@@ -6,33 +6,66 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // SPACES
+    function isSpaceMember(spaceId) {
+      let space = get(/databases/$(database)/documents/spaces/$(spaceId));
+      return isAuthenticated() && (
+        space.data.ownerId == request.auth.uid ||
+        (space.data.memberIds != null && request.auth.uid in space.data.memberIds)
+      );
+    }
+
+    function isSpaceEditor(spaceId) {
+      let space = get(/databases/$(database)/documents/spaces/$(spaceId));
+      return isAuthenticated() && (
+        space.data.ownerId == request.auth.uid ||
+        (space.data.roles != null && space.data.roles[request.auth.uid] in ['owner', 'editor']) ||
+        (space.data.memberIds != null && request.auth.uid in space.data.memberIds && space.data.roles == null)
+      );
+    }
+
+    // SPACES COLLECTION
     match /spaces/{spaceId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        (resource.data.memberIds != null && request.auth.uid in resource.data.memberIds)
+      );
+
+      allow create: if isAuthenticated() && (
+        request.resource.data.ownerId == request.auth.uid
+      );
+
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        (resource.data.memberIds != null && request.auth.uid in resource.data.memberIds)
+      );
+
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
     }
 
-    // RECORDS (Living Context Engine)
+    // RECORDS COLLECTION (Living Context Engine)
     match /records/{recordId} {
-      allow read, create, update: if isAuthenticated();
+      allow read: if isSpaceMember(resource.data.spaceId);
+      allow create: if isSpaceEditor(request.resource.data.spaceId);
+      allow update: if isSpaceEditor(resource.data.spaceId);
       allow delete: if false; // Preserves immutable historical provenance
     }
 
-    // RELATIONSHIPS
+    // RELATIONSHIPS COLLECTION
     match /relationships/{relId} {
-      allow read, create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow read: if isSpaceMember(resource.data.spaceId);
+      allow create: if isSpaceEditor(request.resource.data.spaceId);
+      allow update: if isSpaceEditor(resource.data.spaceId);
+      allow delete: if isSpaceEditor(resource.data.spaceId);
     }
 
-    // RELAYS
+    // RELAYS COLLECTION
     match /relays/{relayId} {
-      allow read, create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow read: if isSpaceMember(resource.data.spaceId);
+      allow create, update: if isSpaceEditor(request.resource.data.spaceId);
+      allow delete: if isAuthenticated() && resource.data.createdBy.id == request.auth.uid;
     }
 
-    // Default deny all other collections
+    // Default deny all other paths
     match /{document=**} {
       allow read, write: if false;
     }

@@ -10,6 +10,9 @@ import {
   Archive,
   Layers,
   ArrowRight,
+  Edit3,
+  Settings,
+  X,
 } from 'lucide-react';
 import type {
   Space,
@@ -32,18 +35,24 @@ interface SpaceWorkspaceProps {
   onSaveRecord: (record: MarginRecord, reason?: string) => Promise<void>;
   onArchiveRecord: (recordId: string) => Promise<void>;
   onSaveRelationship: (rel: RecordRelationship) => Promise<void>;
+  onRenameSpace: (spaceId: string, newName: string, newDesc?: string) => Promise<void>;
+  onArchiveSpace: (spaceId: string) => Promise<void>;
 }
 
 export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
   space,
   records,
   relationships,
+  currentUser,
   onBack,
   onOpenCapture,
   onLaunchRelay,
   onLaunchReEntry,
+  onSaveRecord,
   onArchiveRecord,
   onSaveRelationship,
+  onRenameSpace,
+  onArchiveSpace,
 }) => {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | RecordType>('all');
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
@@ -54,6 +63,17 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
   const [linkingRecord, setLinkingRecord] = useState<MarginRecord | null>(null);
   const [targetRecordId, setTargetRecordId] = useState('');
   const [relType, setRelType] = useState<RecordRelationship['type']>('supports');
+
+  // Edit Record Modal State
+  const [editingRecord, setEditingRecord] = useState<MarginRecord | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editReason, setEditReason] = useState('');
+
+  // Space Settings Modal State
+  const [isSpaceSettingsOpen, setIsSpaceSettingsOpen] = useState(false);
+  const [spaceRenameInput, setSpaceRenameInput] = useState(space.name);
+  const [spaceDescInput, setSpaceDescInput] = useState(space.description);
 
   const filteredRecords = records.filter((r) => {
     if (r.status === 'archived') return false;
@@ -89,7 +109,6 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
       createdAt: Date.now(),
     };
     await onSaveRelationship(newRel);
-    // Remove from active insights list
     setInsights((prev) => prev.filter((i) => i.title !== insight.title));
   };
 
@@ -111,6 +130,39 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
     setTargetRecordId('');
   };
 
+  const handleStartEdit = (record: MarginRecord) => {
+    setEditingRecord(record);
+    setEditTitle(record.title);
+    setEditContent(record.content);
+    setEditReason('');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingRecord || !editTitle.trim()) return;
+    const updated: MarginRecord = {
+      ...editingRecord,
+      title: editTitle.trim(),
+      content: editContent.trim(),
+      author: currentUser,
+    };
+    await onSaveRecord(updated, editReason.trim() || 'Record revised');
+    setEditingRecord(null);
+  };
+
+  const handleSaveSpaceSettings = async () => {
+    if (!spaceRenameInput.trim()) return;
+    await onRenameSpace(space.id, spaceRenameInput.trim(), spaceDescInput.trim());
+    setIsSpaceSettingsOpen(false);
+  };
+
+  const handleConfirmArchiveSpace = async () => {
+    if (window.confirm(`Are you sure you want to archive "${space.name}"?`)) {
+      await onArchiveSpace(space.id);
+      setIsSpaceSettingsOpen(false);
+      onBack();
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 md:px-8 py-8 space-y-8">
       {/* Top Breadcrumb & Actions Bar */}
@@ -130,9 +182,18 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
                 {space.type} Space
               </span>
             </div>
-            <h1 className="font-serif text-2xl md:text-3xl font-medium text-[#252620] tracking-tight">
-              {space.name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-serif text-2xl md:text-3xl font-medium text-[#252620] tracking-tight">
+                {space.name}
+              </h1>
+              <button
+                onClick={() => setIsSpaceSettingsOpen(true)}
+                className="text-[#77766E] hover:text-[#252620] p-1 rounded-md"
+                title="Space settings & rename"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -451,11 +512,19 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
                 <div className="pt-3 border-t border-[#E5E3DA] flex items-center justify-between text-xs">
                   <div className="flex items-center gap-3">
                     <button
+                      onClick={() => handleStartEdit(record)}
+                      className="text-[#77766E] hover:text-[#252620] flex items-center gap-1 font-medium"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+
+                    <button
                       onClick={() => setExpandedRecordId(isExpanded ? null : record.id)}
                       className="text-[#77766E] hover:text-[#252620] flex items-center gap-1"
                     >
                       <History className="w-3 h-3" />
-                      <span>{isExpanded ? 'Hide History' : 'History'}</span>
+                      <span>{isExpanded ? 'Hide History' : `History (${record.history?.length || 0})`}</span>
                     </button>
 
                     <button
@@ -482,6 +551,130 @@ export const SpaceWorkspace: React.FC<SpaceWorkspaceProps> = ({
           })
         )}
       </div>
+
+      {/* Edit Record Modal */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#252620]/40 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-[#FFFFFF] rounded-xl border border-[#E5E3DA] p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#E5E3DA] pb-3">
+              <h3 className="font-serif text-lg font-medium text-[#252620]">
+                Edit {editingRecord.type} (v{editingRecord.version} ➔ v{editingRecord.version + 1})
+              </h3>
+              <button onClick={() => setEditingRecord(null)} className="text-[#77766E] hover:text-[#252620]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-[#77766E] block mb-1">Headline:</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full px-3 py-1.5 bg-[#F6F5F0] border border-[#E5E3DA] rounded-md text-xs font-medium text-[#252620]"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-[#77766E] block mb-1">Context Content:</label>
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                rows={4}
+                className="w-full p-2.5 bg-[#F6F5F0] border border-[#E5E3DA] rounded-md text-xs text-[#252620] resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-[#77766E] block mb-1">
+                Reason for Revision (Provenance Tracking):
+              </label>
+              <input
+                type="text"
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                placeholder="e.g. Updated based on new shard 04 benchmarks"
+                className="w-full px-3 py-1.5 bg-[#FFFFFF] border border-[#E5E3DA] rounded-md text-xs text-[#252620]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E5E3DA]">
+              <button
+                onClick={() => setEditingRecord(null)}
+                className="px-3 py-1.5 text-xs text-[#77766E] hover:text-[#252620]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={!editTitle.trim()}
+                className="px-4 py-1.5 bg-[#252620] text-[#F6F5F0] rounded-md text-xs font-medium"
+              >
+                Save Revision (v{editingRecord.version + 1})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Space Settings / Rename Modal */}
+      {isSpaceSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#252620]/40 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-[#FFFFFF] rounded-xl border border-[#E5E3DA] p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#E5E3DA] pb-3">
+              <h3 className="font-serif text-lg font-medium text-[#252620]">Space Settings</h3>
+              <button onClick={() => setIsSpaceSettingsOpen(false)} className="text-[#77766E] hover:text-[#252620]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-[#77766E] block mb-1">Space Name:</label>
+              <input
+                type="text"
+                value={spaceRenameInput}
+                onChange={(e) => setSpaceRenameInput(e.target.value)}
+                className="w-full px-3 py-1.5 bg-[#F6F5F0] border border-[#E5E3DA] rounded-md text-xs font-medium text-[#252620]"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-[#77766E] block mb-1">Objective / Description:</label>
+              <textarea
+                value={spaceDescInput}
+                onChange={(e) => setSpaceDescInput(e.target.value)}
+                rows={3}
+                className="w-full p-2.5 bg-[#F6F5F0] border border-[#E5E3DA] rounded-md text-xs text-[#252620] resize-none"
+              />
+            </div>
+
+            <div className="pt-2 border-t border-[#E5E3DA] flex items-center justify-between">
+              <button
+                onClick={handleConfirmArchiveSpace}
+                className="text-xs text-[#B87A4D] hover:underline"
+              >
+                Archive Space
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsSpaceSettingsOpen(false)}
+                  className="px-3 py-1.5 text-xs text-[#77766E] hover:text-[#252620]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSpaceSettings}
+                  disabled={!spaceRenameInput.trim()}
+                  className="px-4 py-1.5 bg-[#252620] text-[#F6F5F0] rounded-md text-xs font-medium"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual Link Modal */}
       {linkingRecord && (

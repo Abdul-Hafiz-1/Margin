@@ -17,13 +17,19 @@ import {
   saveRecord,
   deleteRecord,
   saveSpace,
+  renameSpace,
+  archiveSpace,
   saveRelationship,
   saveRelayBriefing,
   saveReEntry,
+  getReEntry,
+  processPendingSyncQueue,
   seedInitialMarginProject,
 } from './services/marginRepository';
 import { generateRelayBriefing, generateReEntryBriefing } from './services/marginAI';
 import { checkOnDeviceHardware } from './services/aiProofService';
+import { subscribeToAuthChanges, signInAsGuest } from './services/authService';
+import { isFirebaseConfigured } from './services/firebaseConfig';
 import type {
   Space,
   MarginRecord,
@@ -79,6 +85,14 @@ export function App() {
     setRelationships(rel);
     setActivity(act);
 
+    // Populate Re-entry cache for each space
+    const cache: Record<string, ReEntryBriefing> = {};
+    for (const space of sp) {
+      const stored = await getReEntry(space.id);
+      if (stored) cache[space.id] = stored;
+    }
+    setReEntryCache(cache);
+
     // Hardware capability check
     const hw = checkOnDeviceHardware();
     setHasOnDeviceAI(hw.hasPromptAPI);
@@ -87,25 +101,32 @@ export function App() {
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      await seedInitialMarginProject();
-      const [sp, rec, rel, act] = await Promise.all([
-        getSpaces(),
-        getRecords(),
-        getRelationships(),
-        getActivity(),
-      ]);
+      await loadData();
 
-      if (!mounted) return;
-      setSpaces(sp);
-      setRecords(rec);
-      setRelationships(rel);
-      setActivity(act);
-
-      const hw = checkOnDeviceHardware();
-      setHasOnDeviceAI(hw.hasPromptAPI);
+      // Subscribe to real Firebase Auth
+      if (isFirebaseConfigured) {
+        subscribeToAuthChanges(async (authAuthor) => {
+          if (!mounted) return;
+          if (authAuthor) {
+            setCurrentUser(authAuthor);
+          } else {
+            // Auto-sign in as guest if no session exists so Firestore auth checks succeed
+            try {
+              const guest = await signInAsGuest();
+              if (mounted) setCurrentUser(guest);
+            } catch (authErr) {
+              console.warn('[MARGIN Auth] Anonymous sign-in deferred:', authErr);
+            }
+          }
+        });
+      }
     })();
 
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Automatically flush pending offline writes on reconnection
+      void processPendingSyncQueue();
+    };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
@@ -129,7 +150,7 @@ export function App() {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [loadData]);
 
   // Record Handlers
   const handleSaveRecord = async (newRec: MarginRecord, reason?: string) => {
@@ -154,6 +175,16 @@ export function App() {
     await saveSpace(newSpace);
     await loadData();
     setActiveSpaceId(newSpace.id);
+  };
+
+  const handleRenameSpace = async (spaceId: string, newName: string, newDesc?: string) => {
+    await renameSpace(spaceId, newName, newDesc);
+    await loadData();
+  };
+
+  const handleArchiveSpace = async (spaceId: string) => {
+    await archiveSpace(spaceId);
+    await loadData();
   };
 
   // Launch Relay Briefing
@@ -212,6 +243,8 @@ export function App() {
             onSaveRecord={handleSaveRecord}
             onArchiveRecord={handleArchiveRecord}
             onSaveRelationship={handleSaveRelationship}
+            onRenameSpace={handleRenameSpace}
+            onArchiveSpace={handleArchiveSpace}
           />
         ) : (
           <>

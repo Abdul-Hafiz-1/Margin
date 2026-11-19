@@ -124,6 +124,15 @@ export async function getSpaceById(spaceId: string): Promise<Space | undefined> 
 export async function saveSpace(space: Space): Promise<void> {
   const db = await getLocalDB();
   space.updatedAt = Date.now();
+  
+  // Guarantee memberIds and roles for Firestore security rules
+  space.memberIds = Array.from(new Set([space.ownerId, ...(space.members?.map((m) => m.userId) || [])]));
+  space.roles = space.roles || {};
+  space.roles[space.ownerId] = 'owner';
+  space.members?.forEach((m) => {
+    if (space.roles) space.roles[m.userId] = m.role;
+  });
+
   await db.put('spaces', space);
 
   // Firestore background sync
@@ -137,6 +146,21 @@ export async function saveSpace(space: Space): Promise<void> {
   } else {
     await queuePendingSync('space', space.id, space);
   }
+}
+
+export async function renameSpace(spaceId: string, newName: string, newDescription?: string): Promise<void> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return;
+  space.name = newName.trim();
+  if (newDescription !== undefined) space.description = newDescription.trim();
+  await saveSpace(space);
+}
+
+export async function archiveSpace(spaceId: string): Promise<void> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return;
+  space.isArchived = true;
+  await saveSpace(space);
 }
 
 // ============================================================================
@@ -418,6 +442,8 @@ export async function seedInitialMarginProject(): Promise<void> {
         joinedAt: Date.now() - 86400000 * 7,
       },
     ],
+    memberIds: [user.id],
+    roles: { [user.id]: 'owner' },
     createdAt: Date.now() - 86400000 * 5,
     updatedAt: Date.now() - 1000 * 60 * 30,
     stats: {

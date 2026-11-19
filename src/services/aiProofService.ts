@@ -146,8 +146,14 @@ Respond in strict JSON with keys:
     if (parsed.type && parsed.title) {
       structuredRequestSuccess = true;
       sampleOutput = parsed;
-      actualExecutionPath = localReady ? 'on_device' : 'in_cloud';
-      modelUsed = localReady ? 'gemini-nano' : 'gemini-2.5-flash';
+      const actualSource = (response.response as any)?.inferenceSource;
+      actualExecutionPath =
+        actualSource === 'on_device'
+          ? 'on_device'
+          : actualSource === 'in_cloud'
+          ? 'in_cloud'
+          : (localReady ? 'on_device' : 'in_cloud');
+      modelUsed = actualExecutionPath === 'on_device' ? 'gemini-nano' : 'gemini-2.5-flash';
     }
   } catch (err: any) {
     errorMsg = err?.message || String(err);

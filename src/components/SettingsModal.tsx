@@ -5,9 +5,13 @@ import {
   Shield,
   Database,
   Play,
+  LogIn,
+  LogOut,
+  UserCheck,
 } from 'lucide-react';
 import { checkOnDeviceHardware, runAIProofOfConcept, type AIProofResult } from '../services/aiProofService';
 import { getAILogs, processPendingSyncQueue } from '../services/marginRepository';
+import { signInWithGoogle, signInAsGuest, signOutUser } from '../services/authService';
 import type { AIOperationLog, RecordAuthor } from '../types/margin';
 
 interface SettingsModalProps {
@@ -311,18 +315,73 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'account' && (
             <div className="space-y-4">
               <div className="p-4 bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg space-y-2">
-                <span className="text-[10px] font-mono text-[#657C69] uppercase font-semibold">
-                  Active Profile
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-[#657C69] uppercase font-semibold">
+                    Active Identity & UID
+                  </span>
+                  <span className="font-mono text-[10px] text-[#77766E] truncate max-w-[200px]">
+                    UID: {currentUser.id}
+                  </span>
+                </div>
                 <h3 className="font-serif text-lg font-medium text-[#252620]">
                   {currentUser.name}
                 </h3>
-                <p className="text-xs text-[#77766E]">{currentUser.email || 'Personal Local Account'}</p>
+                <p className="text-xs text-[#77766E]">{currentUser.email || 'Anonymous Guest Session'}</p>
               </div>
 
-              {/* Switch Demo Accounts */}
+              {/* Real Firebase Authentication Controls */}
+              <div className="p-4 bg-[#FFFFFF] border border-[#E5E3DA] rounded-lg space-y-3">
+                <h4 className="font-medium text-[#252620]">Firebase Authentication:</h4>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const authed = await signInWithGoogle();
+                        onSwitchUser(authed);
+                      } catch (err: any) {
+                        alert(`Google Sign-In notice: ${err?.message || err}`);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#D5D2C7] rounded-md text-xs font-medium text-[#252620] hover:bg-[#F6F5F0]"
+                  >
+                    <LogIn className="w-3.5 h-3.5 text-[#657C69]" />
+                    <span>Sign in with Google</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      try {
+                        const guest = await signInAsGuest();
+                        onSwitchUser(guest);
+                      } catch (err: any) {
+                        alert(`Guest Sign-In notice: ${err?.message || err}`);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#D5D2C7] rounded-md text-xs font-medium text-[#252620] hover:bg-[#F6F5F0]"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-[#2E6B47]" />
+                    <span>Continue as Guest</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      await signOutUser();
+                      onSwitchUser({
+                        id: `guest-${Math.random().toString(36).substring(2, 7)}`,
+                        name: 'Signed Out User',
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#E5E3DA] rounded-md text-xs font-medium text-[#77766E] hover:text-[#B87A4D]"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Persona Switcher for Quick Demos */}
               <div className="space-y-2">
-                <h4 className="font-medium text-[#252620]">Switch User Persona (Multi-User Testing):</h4>
+                <h4 className="font-medium text-[#252620]">Quick Demo Personas:</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() =>

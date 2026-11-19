@@ -89,6 +89,8 @@ export interface Space {
   ownerId: string;
   type: 'personal' | 'shared';
   members: SpaceMember[];
+  memberIds?: string[];
+  roles?: Record<string, SpaceRole>;
   createdAt: number;
   updatedAt: number;
   isArchived?: boolean;
