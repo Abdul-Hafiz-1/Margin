@@ -4,7 +4,7 @@
 > *Built for the #BuildHybridAI 2026 Hackathon (Firebase AI Logic Hybrid Inference)*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![PWA Ready](https://img.shields.io/badge/PWA-Installable-emerald.svg)](https://wary.web.app)
+[![PWA Ready](https://img.shields.io/badge/PWA-Installable-emerald.svg)](https://waryapp.web.app)
 [![Firebase AI Logic](https://img.shields.io/badge/Firebase-AI_Logic_Hybrid-orange.svg)](https://firebase.google.com/docs/ai)
 [![Eval Accuracy](https://img.shields.io/badge/Eval_Accuracy-100%25-brightgreen.svg)](#evaluation-results)
 
