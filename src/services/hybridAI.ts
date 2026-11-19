@@ -80,8 +80,11 @@ export async function initializeOnDeviceModel(): Promise<boolean> {
   try {
     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
     onDeviceModelInstance = getGenerativeModel(ai, {
-      model: 'gemini-2.5-flash',
       mode: InferenceMode.PREFER_ON_DEVICE,
+      inCloudParams: {
+        model: 'gemini-2.5-flash',
+      },
+      onDeviceParams: {},
     });
 
     // Call initializeDeviceModel with progress tracking
