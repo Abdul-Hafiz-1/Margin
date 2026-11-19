@@ -1,7 +1,7 @@
 {
-  "name": "wary",
+  "name": "margin",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "firebase": "^13.4.0",
+    "framer-motion": "^14.14.0",
     "idb": "^8.0.4",
     "lucide-react": "^1.76.0",
     "react": "^19.3.1",

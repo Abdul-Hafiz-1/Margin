@@ -1,226 +1,377 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
-  Settings,
-  RefreshCw,
-  SlidersHorizontal,
-  Key,
-  Check,
-  RotateCcw,
+  Cpu,
+  Shield,
+  Database,
+  Play,
 } from 'lucide-react';
-import type { RemoteConfigState } from '../types';
-import {
-  updateSimulationRemoteConfig,
-  refreshRemoteConfig,
-  DEFAULT_REMOTE_CONFIG,
-} from '../services/remoteConfigService';
+import { checkOnDeviceHardware, runAIProofOfConcept, type AIProofResult } from '../services/aiProofService';
+import { getAILogs, processPendingSyncQueue } from '../services/marginRepository';
+import type { AIOperationLog, RecordAuthor } from '../types/margin';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  config: RemoteConfigState;
+  currentUser: RecordAuthor;
+  onSwitchUser: (newUser: RecordAuthor) => void;
+  isSimulatedOffline: boolean;
+  onToggleSimulatedOffline: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
-  config,
+  currentUser,
+  onSwitchUser,
+  isSimulatedOffline,
+  onToggleSimulatedOffline,
 }) => {
-  const [threshold, setThreshold] = useState(config.escalationConfidenceThreshold);
-  const [localOnly, setLocalOnly] = useState(config.localOnlyMode);
-  const [banner, setBanner] = useState(config.bannerMessage);
-  const [patternVersion, setPatternVersion] = useState(config.patternPackVersion);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [activeTab, setActiveTab] = useState<'ai' | 'sync' | 'account'>('ai');
+  const [proofResult, setProofResult] = useState<AIProofResult | null>(null);
+  const [isRunningProof, setIsRunningProof] = useState(false);
+  const [aiLogs, setAiLogs] = useState<AIOperationLog[]>([]);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      getAILogs().then(setAiLogs);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    updateSimulationRemoteConfig({
-      escalationConfidenceThreshold: threshold,
-      localOnlyMode: localOnly,
-      bannerMessage: banner,
-      patternPackVersion: patternVersion,
-    });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2000);
+  const hardware = checkOnDeviceHardware();
+
+  const handleRunProof = async () => {
+    setIsRunningProof(true);
+    try {
+      const res = await runAIProofOfConcept();
+      setProofResult(res);
+      const logs = await getAILogs();
+      setAiLogs(logs);
+    } finally {
+      setIsRunningProof(false);
+    }
   };
 
-  const handleReset = () => {
-    updateSimulationRemoteConfig(DEFAULT_REMOTE_CONFIG);
-    setThreshold(DEFAULT_REMOTE_CONFIG.escalationConfidenceThreshold);
-    setLocalOnly(DEFAULT_REMOTE_CONFIG.localOnlyMode);
-    setBanner(DEFAULT_REMOTE_CONFIG.bannerMessage);
-    setPatternVersion(DEFAULT_REMOTE_CONFIG.patternPackVersion);
-  };
-
-  const handleFetchRemote = async () => {
-    setIsRefreshing(true);
-    const updated = await refreshRemoteConfig();
-    setThreshold(updated.escalationConfidenceThreshold);
-    setLocalOnly(updated.localOnlyMode);
-    setBanner(updated.bannerMessage);
-    setPatternVersion(updated.patternPackVersion);
-    setIsRefreshing(false);
+  const handleManualSync = async () => {
+    setSyncFeedback('Processing pending queue...');
+    const res = await processPendingSyncQueue();
+    setSyncFeedback(`Sync complete: ${res.syncedCount} items uploaded, ${res.errors} deferred.`);
+    setTimeout(() => setSyncFeedback(null), 3000);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-      <div className="relative w-full max-w-xl max-h-[90vh] bg-[#0f172a] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#252620]/40 backdrop-blur-xs">
+      <div
+        className="w-full max-w-2xl bg-[#FFFFFF] rounded-xl border border-[#E5E3DA] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-[#090d16]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
-              <Settings className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white tracking-tight">
-                Settings & Remote Config
-              </h2>
-              <p className="text-xs text-slate-400">
-                Control runtime behavior, scam rules packs, and App Check.
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5E3DA] bg-[#F6F5F0]">
+          <h2 id="settings-title" className="font-serif text-xl font-medium text-[#252620]">
+            System & AI Configuration
+          </h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            aria-label="Close modal"
+            className="text-[#77766E] hover:text-[#252620] p-1 rounded-md"
+            aria-label="Close settings"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Form Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Remote Config Sync Banner */}
-          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
-            <div>
-              <span className="text-[11px] text-slate-400 block uppercase tracking-wider font-semibold">
-                Active Pattern Pack
-              </span>
-              <span className="text-sm font-mono font-bold text-blue-400">
-                {config.patternPackVersion}
-              </span>
-              <span className="text-[10px] text-slate-500 block mt-0.5">
-                Prompt Version: {config.promptVersion}
-              </span>
-            </div>
-            <button
-              onClick={handleFetchRemote}
-              disabled={isRefreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>Fetch Remote</span>
-            </button>
-          </div>
-
-          {/* Escalation Confidence Threshold */}
-          <div className="p-4 rounded-xl bg-[#090d16] border border-slate-800 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                <SlidersHorizontal className="w-3.5 h-3.5 text-blue-400" />
-                <span>Escalation Confidence Threshold</span>
-              </label>
-              <span className="text-xs font-mono font-bold text-blue-400">
-                {Math.round(threshold * 100)}%
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              If on-device confidence is below this value, Wary escalates to the cloud model with on-device redaction.
-            </p>
-            <input
-              type="range"
-              min="0.5"
-              max="0.99"
-              step="0.01"
-              value={threshold}
-              onChange={(e) => setThreshold(parseFloat(e.target.value))}
-              className="w-full accent-blue-600 bg-slate-800 h-1.5 rounded-lg cursor-pointer"
-            />
-          </div>
-
-          {/* Local-Only Mode (Kill Switch) */}
-          <div className="p-4 rounded-xl bg-[#090d16] border border-slate-800 flex items-center justify-between">
-            <div className="pr-4">
-              <span className="text-xs font-semibold text-slate-200 block">
-                Local-Only Mode (Cloud Kill Switch)
-              </span>
-              <span className="text-[11px] text-slate-400">
-                When active, completely disables all cloud fallback calls. Only Stage 0 rules and on-device AI run.
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={localOnly}
-              onClick={() => setLocalOnly(!localOnly)}
-              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
-                localOnly ? 'bg-blue-600' : 'bg-slate-800'
-              }`}
-            >
-              <div
-                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                  localOnly ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Banner Message */}
-          <div className="p-4 rounded-xl bg-[#090d16] border border-slate-800 space-y-2">
-            <label className="text-xs font-semibold text-slate-200 block">
-              Broadcast Banner Message
-            </label>
-            <input
-              type="text"
-              value={banner}
-              onChange={(e) => setBanner(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          {/* App Check Information for Judges */}
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>Firebase App Check & Debug Tokens</span>
-            </h4>
-            <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-              App Check protects both Firebase AI Logic and Firestore. In production, reCAPTCHA v3 validates web traffic. For local judge evaluation and development, set:
-            </p>
-            <code className="text-[11px] bg-slate-950 p-2 rounded block text-emerald-400 font-mono overflow-x-auto border border-slate-800">
-              VITE_APPCHECK_DEBUG_TOKEN=true
-            </code>
-            <p className="text-[10px] text-slate-500">
-              The debug token printed in the browser console can be whitelisted under Firebase Console &gt; App Check &gt; Apps.
-            </p>
-          </div>
-        </div>
-
-        {/* Footer Actions */}
-        <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-[#090d16]">
+        {/* Navigation Tabs */}
+        <div className="flex items-center border-b border-[#E5E3DA] px-6 bg-[#FFFFFF] text-xs font-medium">
           <button
-            onClick={handleReset}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors"
+            onClick={() => setActiveTab('ai')}
+            className={`py-3 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'ai'
+                ? 'border-[#657C69] text-[#252620]'
+                : 'border-transparent text-[#77766E] hover:text-[#252620]'
+            }`}
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Defaults</span>
+            <Cpu className="w-3.5 h-3.5" />
+            <span>Firebase AI Logic & Audit</span>
           </button>
 
           <button
-            onClick={handleSave}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs px-4 py-2 rounded-lg transition-colors shadow-lg shadow-blue-600/20"
+            onClick={() => setActiveTab('sync')}
+            className={`py-3 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'sync'
+                ? 'border-[#657C69] text-[#252620]'
+                : 'border-transparent text-[#77766E] hover:text-[#252620]'
+            }`}
           >
-            {savedSuccess ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-300" />
-                <span>Applied!</span>
-              </>
-            ) : (
-              <span>Apply Changes</span>
-            )}
+            <Database className="w-3.5 h-3.5" />
+            <span>Offline & Persistence</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('account')}
+            className={`py-3 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'account'
+                ? 'border-[#657C69] text-[#252620]'
+                : 'border-transparent text-[#77766E] hover:text-[#252620]'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>Profile & Privacy</span>
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="p-6 overflow-y-auto space-y-6 text-xs">
+          {activeTab === 'ai' && (
+            <div className="space-y-6">
+              {/* Hardware Status Card */}
+              <div className="bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase font-semibold text-[#657C69]">
+                    Hardware & Prompt API Audit
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium ${
+                      hardware.hasPromptAPI
+                        ? 'bg-[#EAF3EC] text-[#2E6B47]'
+                        : 'bg-[#FBF0EA] text-[#94532B]'
+                    }`}
+                  >
+                    {hardware.hasPromptAPI ? 'Gemini Nano Ready' : 'Cloud / Fallback Mode'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-[#56554D]">
+                  <div>
+                    <span className="text-[#77766E] block text-[10px]">Browser Engine:</span>
+                    <span className="font-mono text-[#252620]">
+                      {hardware.isChromeDesktop139Plus ? 'Chrome Desktop 139+' : 'Other / Non-Chrome'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#77766E] block text-[10px]">Prompt API (window.ai):</span>
+                    <span className="font-mono text-[#252620]">
+                      {hardware.hasPromptAPI ? 'Detected & Enabled' : 'Unavailable'}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-[#77766E] leading-relaxed pt-1 border-t border-[#E5E3DA]">
+                  {hardware.details}
+                </p>
+              </div>
+
+              {/* Technical Proof Verification Button */}
+              <div className="bg-[#FFFFFF] border border-[#E5E3DA] rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-serif text-sm font-medium text-[#252620]">
+                      Run Firebase AI Logic Technical Proof
+                    </h3>
+                    <p className="text-[11px] text-[#77766E]">
+                      Tests initialization, structured JSON generation, and reports verified execution path.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleRunProof}
+                    disabled={isRunningProof}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#252620] text-[#F6F5F0] rounded-md text-xs font-medium hover:bg-[#3D3E35] disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3 text-[#A8BBAA]" />
+                    <span>{isRunningProof ? 'Testing...' : 'Execute Proof'}</span>
+                  </button>
+                </div>
+
+                {proofResult && (
+                  <div className="p-3 bg-[#F6F5F0] border border-[#E5E3DA] rounded-md space-y-2 font-mono text-[11px]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#252620] font-semibold">Verified Path:</span>
+                      <span className="text-[#657C69]">{proofResult.actualExecutionPath}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#252620]">Latency:</span>
+                      <span>{proofResult.latencyMs} ms</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#252620]">Model Instance:</span>
+                      <span>{proofResult.modelUsed}</span>
+                    </div>
+                    <div className="pt-2 border-t border-[#E5E3DA] text-[10px] text-[#56554D]">
+                      Structured Output: {JSON.stringify(proofResult.sampleOutput)}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Execution Audit Log Table */}
+              <div className="space-y-2">
+                <h3 className="font-serif text-sm font-medium text-[#252620]">
+                  AI Execution Transparency Audit Log
+                </h3>
+                <div className="border border-[#E5E3DA] rounded-lg overflow-hidden bg-[#FFFFFF]">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-[#F6F5F0] border-b border-[#E5E3DA] text-[#77766E] font-mono text-[10px]">
+                      <tr>
+                        <th className="p-2">Operation</th>
+                        <th className="p-2">Inference Mode</th>
+                        <th className="p-2">Model</th>
+                        <th className="p-2">Status</th>
+                        <th className="p-2">Latency</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E5E3DA]">
+                      {aiLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-4 text-center text-[#77766E]">
+                            No AI operations logged yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        aiLogs.slice(0, 6).map((log) => (
+                          <tr key={log.id} className="hover:bg-[#F6F5F0]">
+                            <td className="p-2 font-medium capitalize text-[#252620]">
+                              {log.operationType.replace('_', ' ')}
+                            </td>
+                            <td className="p-2 font-mono text-[#657C69]">{log.inferenceMode}</td>
+                            <td className="p-2 font-mono text-[#77766E]">{log.model}</td>
+                            <td className="p-2">
+                              <span
+                                className={`px-1.5 py-0.2 rounded font-mono text-[10px] ${
+                                  log.status === 'success'
+                                    ? 'bg-[#EAF3EC] text-[#2E6B47]'
+                                    : 'bg-[#FBF0EA] text-[#94532B]'
+                                }`}
+                              >
+                                {log.status}
+                              </span>
+                            </td>
+                            <td className="p-2 font-mono text-[#77766E]">{log.latencyMs || 0}ms</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'sync' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg space-y-2">
+                <h3 className="font-medium text-[#252620]">IndexedDB Local-First Persistence</h3>
+                <p className="text-[11px] text-[#77766E] leading-relaxed">
+                  All spaces, records, and relationships are persisted in your browser's IndexedDB before any cloud synchronization. Your context remains completely accessible and editable offline.
+                </p>
+              </div>
+
+              {/* Simulate Offline Mode Toggle */}
+              <div className="flex items-center justify-between p-4 bg-[#FFFFFF] border border-[#E5E3DA] rounded-lg">
+                <div>
+                  <h4 className="font-medium text-[#252620]">Simulate Offline Mode</h4>
+                  <p className="text-[11px] text-[#77766E]">
+                    Forces offline behavior for hackathon demos and testing local queues.
+                  </p>
+                </div>
+                <button
+                  onClick={onToggleSimulatedOffline}
+                  className={`px-3 py-1.5 rounded-md font-mono text-xs font-medium transition-colors ${
+                    isSimulatedOffline
+                      ? 'bg-[#B87A4D] text-white'
+                      : 'bg-[#EFEEE8] text-[#252620] hover:bg-[#E5E3DA]'
+                  }`}
+                >
+                  {isSimulatedOffline ? 'Simulating Offline' : 'Online'}
+                </button>
+              </div>
+
+              {/* Sync queue trigger */}
+              <div className="flex items-center justify-between p-4 bg-[#FFFFFF] border border-[#E5E3DA] rounded-lg">
+                <div>
+                  <h4 className="font-medium text-[#252620]">Synchronize Pending Queue</h4>
+                  <p className="text-[11px] text-[#77766E]">
+                    Flush pending local writes to Cloud Firestore.
+                  </p>
+                </div>
+                <button
+                  onClick={handleManualSync}
+                  className="px-3 py-1.5 bg-[#252620] text-[#F6F5F0] rounded-md text-xs font-medium"
+                >
+                  Sync Now
+                </button>
+              </div>
+              {syncFeedback && <p className="text-xs text-[#2E6B47] font-medium">{syncFeedback}</p>}
+            </div>
+          )}
+
+          {activeTab === 'account' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg space-y-2">
+                <span className="text-[10px] font-mono text-[#657C69] uppercase font-semibold">
+                  Active Profile
+                </span>
+                <h3 className="font-serif text-lg font-medium text-[#252620]">
+                  {currentUser.name}
+                </h3>
+                <p className="text-xs text-[#77766E]">{currentUser.email || 'Personal Local Account'}</p>
+              </div>
+
+              {/* Switch Demo Accounts */}
+              <div className="space-y-2">
+                <h4 className="font-medium text-[#252620]">Switch User Persona (Multi-User Testing):</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() =>
+                      onSwitchUser({
+                        id: 'user-lead',
+                        name: 'Sarah Chen',
+                        email: 'sarah.chen@margin.app',
+                      })
+                    }
+                    className={`p-2.5 rounded-lg border text-left text-xs ${
+                      currentUser.name === 'Sarah Chen'
+                        ? 'border-[#657C69] bg-[#E8EEE7] text-[#252620]'
+                        : 'border-[#E5E3DA] bg-[#FFFFFF] text-[#77766E]'
+                    }`}
+                  >
+                    <p className="font-medium text-[#252620]">Sarah Chen (Tech Lead)</p>
+                    <p className="text-[10px] text-[#77766E]">Owner of Project Apollo</p>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      onSwitchUser({
+                        id: 'user-engineer',
+                        name: 'Marcus Vance',
+                        email: 'marcus.v@margin.app',
+                      })
+                    }
+                    className={`p-2.5 rounded-lg border text-left text-xs ${
+                      currentUser.name === 'Marcus Vance'
+                        ? 'border-[#657C69] bg-[#E8EEE7] text-[#252620]'
+                        : 'border-[#E5E3DA] bg-[#FFFFFF] text-[#77766E]'
+                    }`}
+                  >
+                    <p className="font-medium text-[#252620]">Marcus Vance (Staff SRE)</p>
+                    <p className="text-[10px] text-[#77766E]">Relay Receiver & Editor</p>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end px-6 py-3 border-t border-[#E5E3DA] bg-[#F6F5F0]">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-[#252620] text-[#F6F5F0] rounded-md text-xs font-medium"
+          >
+            Close
           </button>
         </div>
       </div>

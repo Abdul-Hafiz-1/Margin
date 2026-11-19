@@ -1,287 +1,309 @@
-import React, { useState, useEffect } from 'react';
-import type {
-  ScanResult,
-  AppLanguage,
-  ModelStatus,
-  RemoteConfigState,
-  LedgerEntry,
-  FamilyCircleAlert,
-} from './types';
-import { Header } from './components/Header';
-import { ModelStatusBanner } from './components/ModelStatusBanner';
-import { CheckScreen } from './components/CheckScreen';
-import { VerdictCard } from './components/VerdictCard';
-import { PrivacyLedgerModal } from './components/PrivacyLedgerModal';
-import { FamilyCircleModal } from './components/FamilyCircleModal';
+import { useState, useEffect, useCallback } from 'react';
+import { Navigation, type ActiveTab } from './components/Navigation';
+import { HomeScreen } from './components/HomeScreen';
+import { SpacesScreen } from './components/SpacesScreen';
+import { SpaceWorkspace } from './components/SpaceWorkspace';
+import { ActivityScreen } from './components/ActivityScreen';
+import { SearchScreen } from './components/SearchScreen';
+import { CaptureModal } from './components/CaptureModal';
+import { RelayModal } from './components/RelayModal';
+import { ReEntryModal } from './components/ReEntryModal';
 import { SettingsModal } from './components/SettingsModal';
-
 import {
-  runHybridScan,
-  subscribeModelStatus,
-  initializeOnDeviceModel,
-} from './services/hybridAI';
-import {
-  subscribeRemoteConfig,
-  getActiveRemoteConfig,
-  refreshRemoteConfig,
-} from './services/remoteConfigService';
-import {
-  getLedgerEntries,
-  clearLedgerEntries,
-} from './services/privacyLedger';
-import {
-  listenAuth,
-  getCurrentUser,
-  subscribeCircleAlerts,
-  broadcastFamilyAlert,
-  type CircleInfo,
-} from './services/familyCircle';
-import { initAppCheck } from './services/firebaseConfig';
-import { TRANSLATIONS } from './data/i18n';
+  getSpaces,
+  getRecords,
+  getRelationships,
+  getActivity,
+  saveRecord,
+  deleteRecord,
+  saveSpace,
+  saveRelationship,
+  saveRelayBriefing,
+  saveReEntry,
+  seedInitialMarginProject,
+} from './services/marginRepository';
+import { generateRelayBriefing, generateReEntryBriefing } from './services/marginAI';
+import { checkOnDeviceHardware } from './services/aiProofService';
+import type {
+  Space,
+  MarginRecord,
+  RecordRelationship,
+  ActivityItem,
+  RecordAuthor,
+  RelayBriefing,
+  ReEntryBriefing,
+} from './types/margin';
 
-export const App: React.FC = () => {
-  const [inputText, setInputText] = useState('');
-  const [currentResult, setCurrentResult] = useState<ScanResult | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [isSecondOpinionLoading, setIsSecondOpinionLoading] = useState(false);
-  const [language, setLanguage] = useState<AppLanguage>('en');
+export function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
 
-  const [modelStatus, setModelStatus] = useState<ModelStatus>('idle');
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [simulateOffline, setSimulateOffline] = useState(false);
+  // Core Data State
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [records, setRecords] = useState<MarginRecord[]>([]);
+  const [relationships, setRelationships] = useState<RecordRelationship[]>([]);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [reEntryCache, setReEntryCache] = useState<Record<string, ReEntryBriefing>>({});
 
-  const [remoteConfig, setRemoteConfig] = useState<RemoteConfigState>(getActiveRemoteConfig());
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
+  // Active User Profile
+  const [currentUser, setCurrentUser] = useState<RecordAuthor>({
+    id: 'user-lead',
+    name: 'Sarah Chen',
+    email: 'sarah.chen@margin.app',
+  });
 
-  // Family Circle State
-  const [currentUser, setCurrentUser] = useState<{ uid: string; displayName: string } | null>(
-    getCurrentUser()
-  );
-  const [activeCircle, setActiveCircle] = useState<CircleInfo | null>(null);
-  const [familyAlerts, setFamilyAlerts] = useState<FamilyCircleAlert[]>([]);
-  const [hasUnreadAlert, setHasUnreadAlert] = useState(false);
-
-  // Modals
-  const [isLedgerOpen, setIsLedgerOpen] = useState(false);
-  const [isFamilyOpen, setIsFamilyOpen] = useState(false);
+  // Modal States
+  const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeRelay, setActiveRelay] = useState<RelayBriefing | null>(null);
+  const [activeReEntry, setActiveReEntry] = useState<ReEntryBriefing | null>(null);
 
-  const t = TRANSLATIONS[language];
+  // Network & System States
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'local' | 'error'>('synced');
+  const [hasOnDeviceAI, setHasOnDeviceAI] = useState(false);
 
-  // Lifecycle initialization
+  // Load Initial Repository Data
+  const loadData = useCallback(async () => {
+    await seedInitialMarginProject();
+    const [sp, rec, rel, act] = await Promise.all([
+      getSpaces(),
+      getRecords(),
+      getRelationships(),
+      getActivity(),
+    ]);
+
+    setSpaces(sp);
+    setRecords(rec);
+    setRelationships(rel);
+    setActivity(act);
+
+    // Hardware capability check
+    const hw = checkOnDeviceHardware();
+    setHasOnDeviceAI(hw.hasPromptAPI);
+  }, []);
+
   useEffect(() => {
-    // 1. Initialize App Check
-    initAppCheck();
+    let mounted = true;
+    void (async () => {
+      await seedInitialMarginProject();
+      const [sp, rec, rel, act] = await Promise.all([
+        getSpaces(),
+        getRecords(),
+        getRelationships(),
+        getActivity(),
+      ]);
 
-    // 2. Subscribe to Model Status
-    const unsubModel = subscribeModelStatus((status, progress) => {
-      setModelStatus(status);
-      setDownloadProgress(progress);
-    });
+      if (!mounted) return;
+      setSpaces(sp);
+      setRecords(rec);
+      setRelationships(rel);
+      setActivity(act);
 
-    // 3. Subscribe to Remote Config
-    const unsubConfig = subscribeRemoteConfig((cfg) => {
-      setRemoteConfig(cfg);
-    });
-    refreshRemoteConfig();
+      const hw = checkOnDeviceHardware();
+      setHasOnDeviceAI(hw.hasPromptAPI);
+    })();
 
-    // 4. Load initial Privacy Ledger
-    getLedgerEntries().then(setLedgerEntries);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
 
-    // 5. Subscribe to Auth
-    const unsubAuth = listenAuth((user) => {
-      setCurrentUser(user);
-    });
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Global keyboard shortcut: 'C' to quick capture
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.key === 'c' || e.key === 'C') &&
+        !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)
+      ) {
+        e.preventDefault();
+        setIsCaptureOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      unsubModel();
-      unsubConfig();
-      unsubAuth();
+      mounted = false;
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
-  // Family Circle realtime listener
-  useEffect(() => {
-    if (activeCircle) {
-      const unsubCircle = subscribeCircleAlerts(activeCircle.id, (alerts) => {
-        setFamilyAlerts(alerts);
-        if (alerts.length > 0) {
-          setHasUnreadAlert(true);
-        }
-      });
-      return unsubCircle;
-    }
-  }, [activeCircle]);
-
-  const refreshLedger = async () => {
-    const entries = await getLedgerEntries();
-    setLedgerEntries(entries);
+  // Record Handlers
+  const handleSaveRecord = async (newRec: MarginRecord, reason?: string) => {
+    setSyncStatus('syncing');
+    await saveRecord(newRec, reason);
+    await loadData();
+    setSyncStatus('synced');
   };
 
-  const handleRunCheck = async (text: string, source: 'text' | 'screenshot' = 'text') => {
-    if (!text.trim()) return;
-    setIsScanning(true);
-    try {
-      const result = await runHybridScan(text, {
-        simulateOffline,
-        source,
-      });
-      setCurrentResult(result);
-      await refreshLedger();
-    } catch (err) {
-      console.error('Scan execution error:', err);
-    } finally {
-      setIsScanning(false);
-    }
+  const handleArchiveRecord = async (recordId: string) => {
+    if (!activeSpaceId) return;
+    await deleteRecord(recordId, activeSpaceId, currentUser);
+    await loadData();
   };
 
-  const handleSecondOpinion = async () => {
-    if (!currentResult) return;
-    setIsSecondOpinionLoading(true);
-    try {
-      const result = await runHybridScan(currentResult.originalText, {
-        forceCloudSecondOpinion: true,
-        simulateOffline: false,
-      });
-      setCurrentResult(result);
-      await refreshLedger();
-    } catch (err) {
-      console.error('Second opinion error:', err);
-    } finally {
-      setIsSecondOpinionLoading(false);
-    }
+  const handleSaveRelationship = async (rel: RecordRelationship) => {
+    await saveRelationship(rel, currentUser);
+    await loadData();
   };
 
-  const handleBroadcastFamilyAlert = async () => {
-    if (!currentResult) return;
-    const targetCircleId = activeCircle ? activeCircle.id : 'circle_demo_family';
-    await broadcastFamilyAlert(
-      targetCircleId,
-      currentResult.scamType,
-      currentResult.verdict === 'Likely scam' ? 'high' : 'medium'
-    );
-    alert('Security Alert sent to Family Circle: Alert contains ONLY the threat pattern and time. No message text was shared.');
-    setIsFamilyOpen(true);
+  const handleCreateSpace = async (newSpace: Space) => {
+    await saveSpace(newSpace);
+    await loadData();
+    setActiveSpaceId(newSpace.id);
   };
 
-  const handleInitOnDeviceAI = async () => {
-    await initializeOnDeviceModel();
+  // Launch Relay Briefing
+  const handleLaunchRelay = async (spaceId: string) => {
+    const spaceObj = spaces.find((s) => s.id === spaceId);
+    if (!spaceObj) return;
+
+    const spaceRecords = records.filter((r) => r.spaceId === spaceId);
+    const briefing = await generateRelayBriefing(spaceObj.name, spaceRecords, currentUser);
+    await saveRelayBriefing(briefing);
+    setActiveRelay(briefing);
   };
 
-  const handleClearLedger = async () => {
-    await clearLedgerEntries();
-    setLedgerEntries([]);
+  // Launch Re-Entry Briefing
+  const handleLaunchReEntry = async (spaceId: string) => {
+    const spaceRecords = records.filter((r) => r.spaceId === spaceId);
+    const briefing = await generateReEntryBriefing(spaceId, spaceRecords);
+    await saveReEntry(briefing);
+    setReEntryCache((prev) => ({ ...prev, [spaceId]: briefing }));
+    setActiveReEntry(briefing);
   };
+
+  // Active Workspace
+  const currentWorkspace = spaces.find((s) => s.id === activeSpaceId);
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
-      {/* App Header */}
-      <Header
-        language={language}
-        onLanguageChange={setLanguage}
-        modelStatus={modelStatus}
-        downloadProgress={downloadProgress}
-        onInitOnDeviceAI={handleInitOnDeviceAI}
-        simulateOffline={simulateOffline}
-        onToggleSimulateOffline={() => setSimulateOffline(!simulateOffline)}
-        onOpenLedger={() => setIsLedgerOpen(true)}
-        onOpenFamily={() => {
-          setIsFamilyOpen(true);
-          setHasUnreadAlert(false);
+    <div className="min-h-screen bg-[#F6F5F0] text-[#252620] flex flex-col md:flex-row antialiased selection:bg-[#E8EEE7] selection:text-[#252620]">
+      {/* Navigation */}
+      <Navigation
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setActiveSpaceId(null); // Return to top-level view
         }}
+        onOpenCapture={() => setIsCaptureOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        ledgerCount={ledgerEntries.length}
-        hasUnreadFamilyAlert={hasUnreadAlert}
+        currentUser={currentUser}
+        isOnline={!isSimulatedOffline && isOnline}
+        syncStatus={syncStatus}
+        hasOnDeviceAI={hasOnDeviceAI}
       />
 
-      {/* Model & Operational Banner */}
-      <ModelStatusBanner
-        modelStatus={modelStatus}
-        downloadProgress={downloadProgress}
-        bannerMessage={remoteConfig.bannerMessage}
-        patternPackVersion={remoteConfig.patternPackVersion}
-        simulateOffline={simulateOffline}
-        onInitOnDeviceAI={handleInitOnDeviceAI}
-        language={language}
-      />
+      {/* Main Content Area */}
+      <main className="flex-1 md:ml-64 pb-20 md:pb-8 pt-4 md:pt-6 overflow-y-auto">
+        {/* Workspace View if Space Selected */}
+        {activeSpaceId && currentWorkspace ? (
+          <SpaceWorkspace
+            space={currentWorkspace}
+            records={records.filter((r) => r.spaceId === activeSpaceId)}
+            relationships={relationships.filter((r) => r.spaceId === activeSpaceId)}
+            currentUser={currentUser}
+            onBack={() => setActiveSpaceId(null)}
+            onOpenCapture={() => setIsCaptureOpen(true)}
+            onLaunchRelay={() => handleLaunchRelay(activeSpaceId)}
+            onLaunchReEntry={() => handleLaunchReEntry(activeSpaceId)}
+            onSaveRecord={handleSaveRecord}
+            onArchiveRecord={handleArchiveRecord}
+            onSaveRelationship={handleSaveRelationship}
+          />
+        ) : (
+          <>
+            {activeTab === 'home' && (
+              <HomeScreen
+                spaces={spaces}
+                recentRecords={records}
+                currentUser={currentUser}
+                onOpenSpace={(id) => setActiveSpaceId(id)}
+                onOpenCapture={() => setIsCaptureOpen(true)}
+                onLaunchReEntry={handleLaunchReEntry}
+                onLaunchRelay={handleLaunchRelay}
+                reEntryCache={reEntryCache}
+              />
+            )}
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-8 space-y-8">
-        {/* Hero Section */}
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
-            {t.tagline}
-          </h1>
-          <p className="text-sm sm:text-base text-slate-400 max-w-xl mx-auto">
-            {t.promise}
-          </p>
-        </div>
+            {activeTab === 'spaces' && (
+              <SpacesScreen
+                spaces={spaces}
+                records={records}
+                currentUser={currentUser}
+                onOpenSpace={(id) => setActiveSpaceId(id)}
+                onCreateSpace={handleCreateSpace}
+                onLaunchRelay={handleLaunchRelay}
+                onLaunchReEntry={handleLaunchReEntry}
+              />
+            )}
 
-        {/* Check Screen Input & Samples */}
-        <CheckScreen
-          inputText={inputText}
-          onInputChange={setInputText}
-          onRunCheck={handleRunCheck}
-          isScanning={isScanning}
-          language={language}
-        />
+            {activeTab === 'activity' && (
+              <ActivityScreen
+                activity={activity}
+                spaces={spaces}
+                onOpenSpace={(id) => setActiveSpaceId(id)}
+              />
+            )}
 
-        {/* Verdict Display */}
-        {currentResult && (
-          <div id="verdict-section" className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <VerdictCard
-              result={currentResult}
-              onSecondOpinion={handleSecondOpinion}
-              onBroadcastFamilyAlert={handleBroadcastFamilyAlert}
-              isSecondOpinionLoading={isSecondOpinionLoading}
-              language={language}
-              isCircleJoined={Boolean(activeCircle)}
-            />
-          </div>
+            {activeTab === 'search' && (
+              <SearchScreen
+                records={records}
+                spaces={spaces}
+                onOpenSpace={(id) => setActiveSpaceId(id)}
+              />
+            )}
+          </>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-[#090d16] py-6 px-4 mt-12 text-center text-xs text-slate-500">
-        <div className="max-w-4xl mx-auto space-y-2">
-          <p className="flex items-center justify-center gap-2 flex-wrap">
-            <strong className="text-slate-300">Wary</strong> — Apache-2.0 Open Source.
-            <span>Built for #BuildHybridAI 2026.</span>
-            <span>Powered by Firebase AI Logic & App Check.</span>
-          </p>
-          <p className="text-[11px] text-slate-600">
-            A second opinion, not a guarantee. Wary never reads or stores your private text on any cloud server.
-          </p>
-        </div>
-      </footer>
-
       {/* Modals */}
-      <PrivacyLedgerModal
-        isOpen={isLedgerOpen}
-        onClose={() => setIsLedgerOpen(false)}
-        entries={ledgerEntries}
-        onClear={handleClearLedger}
-        language={language}
+      <CaptureModal
+        isOpen={isCaptureOpen}
+        onClose={() => setIsCaptureOpen(false)}
+        onSaveRecord={handleSaveRecord}
+        spaces={spaces}
+        activeSpaceId={activeSpaceId || spaces[0]?.id}
+        currentUser={currentUser}
       />
 
-      <FamilyCircleModal
-        isOpen={isFamilyOpen}
-        onClose={() => setIsFamilyOpen(false)}
-        currentUser={currentUser}
-        activeCircle={activeCircle}
-        alerts={familyAlerts}
-        onCircleJoined={setActiveCircle}
-        onUserChanged={setCurrentUser}
-        language={language}
-      />
+      {activeRelay && currentWorkspace && (
+        <RelayModal
+          isOpen={Boolean(activeRelay)}
+          onClose={() => setActiveRelay(null)}
+          relay={activeRelay}
+          space={currentWorkspace}
+          onSaveRelay={async (updated) => {
+            await saveRelayBriefing(updated);
+            setActiveRelay(updated);
+          }}
+        />
+      )}
+
+      {activeReEntry && currentWorkspace && (
+        <ReEntryModal
+          isOpen={Boolean(activeReEntry)}
+          onClose={() => setActiveReEntry(null)}
+          briefing={activeReEntry}
+          space={currentWorkspace}
+          onRegenerate={async () => {
+            await handleLaunchReEntry(activeSpaceId!);
+          }}
+        />
+      )}
 
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        config={remoteConfig}
+        currentUser={currentUser}
+        onSwitchUser={setCurrentUser}
+        isSimulatedOffline={isSimulatedOffline}
+        onToggleSimulatedOffline={() => setIsSimulatedOffline(!isSimulatedOffline)}
       />
     </div>
   );
-};
+}
 
 export default App;
