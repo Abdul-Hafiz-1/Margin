@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Family circles collection: accessible only to circle members
+    match /circles/{circleId} {
+      allow read: if request.auth != null && 
+        (resource == null || request.auth.uid in resource.data.members);
+      allow create: if request.auth != null && 
+        request.resource.data.members.hasAny([request.auth.uid]);
+      allow update: if request.auth != null && 
+        (request.auth.uid in resource.data.members);
+        
+      // Realtime alerts: members only, STRICT metadata fields, NO content fields allowed
+      match /alerts/{alertId} {
+        allow read: if request.auth != null &&
+          exists(/databases/$(database)/documents/circles/$(circleId)) &&
+          (request.auth.uid in get(/databases/$(database)/documents/circles/$(circleId)).data.members);
+          
+        allow create: if request.auth != null &&
+          exists(/databases/$(database)/documents/circles/$(circleId)) &&
+          (request.auth.uid in get(/databases/$(database)/documents/circles/$(circleId)).data.members) &&
+          // Verify that ONLY safe metadata fields are submitted
+          request.resource.data.keys().hasOnly(['circleId', 'timestamp', 'scamType', 'severity', 'senderDisplayName', 'senderUserId']) &&
+          // Explicitly forbid any message, content, phone, or raw text fields
+          !('content' in request.resource.data) &&
+          !('message' in request.resource.data) &&
+          !('text' in request.resource.data) &&
+          !('raw' in request.resource.data) &&
+          !('redacted' in request.resource.data) &&
+          !('phone' in request.resource.data) &&
+          !('account' in request.resource.data);
+      }
+    }
+    
+    // Invite code lookup
+    match /inviteCodes/{code} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+  }
+}
