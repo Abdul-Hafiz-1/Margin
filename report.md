@@ -261,4 +261,18 @@ Wary/
 
 ---
 
+## 8. Real Browser Evidence & Verification Log
+
+As requested, we ran automated end-to-end tests against the live production deployment (`https://waryapp.web.app`) using a real browser engine (Microsoft Edge / Chromium on Windows via Puppeteer). Below is the itemized status with exact test logs, console outputs, and visual screenshots:
+
+| Verification Item | Status | Key Evidence / Console Output | Artifact Link |
+|---|---|---|---|
+| **(1) On-Device Path** | **UNVERIFIED** (Requires Chrome Canary + Gemini Nano flags) | Host browser environment: `window.ai: undefined`. The SDK threw `AI: Error ... falling through to Stage 2`, gracefully displaying on-device unavailable status banner without crashing. | [1-on-device-status.png](file:///c:/Users/User/Desktop/My_Apps/Wary/test-evidence/1-on-device-status.png) |
+| **(2) Cloud Path + Redacted Payload** | **VERIFIED** | Inspected exact redacted string in Privacy Ledger before cloud transmission. Card, phone, email, name, and account stripped into placeholders. | [2-privacy-ledger-redacted.png](file:///c:/Users/User/Desktop/My_Apps/Wary/test-evidence/2-privacy-ledger-redacted.png) |
+| **(3) True Offline via DevTools** | **Stage 0: VERIFIED**<br>**OCR: UNVERIFIED** (Weights not precached) | CDP `page.setOfflineMode(true)` (`navigator.onLine === false`). Stage 0 detected electricity scam with 94% confidence, 0 bytes sent. OCR threw `net::ERR_INTERNET_DISCONNECTED` because Tesseract weights were not precached before network was cut. | [3-true-offline-devtools.png](file:///c:/Users/User/Desktop/My_Apps/Wary/test-evidence/3-true-offline-devtools.png) |
+| **(4) App Check Enforced Tokens** | **UNVERIFIED** (Requires Console Registration) | Generated debug token `755c33a1-758d-4ffa-a59a-c196844977c9`. Firebase App Check exchange returned HTTP 403 / 401 until debug token or reCAPTCHA is registered in Firebase Console. | [test-execution.log](file:///c:/Users/User/Desktop/My_Apps/Wary/test-evidence/test-execution.log#L3-L26) |
+| **(5) Family Circle Real Accounts** | **UNVERIFIED** with physical Google accounts<br>(**VERIFIED** in-app multi-user UI) | Automated headless test cannot complete Google OAuth with 2FA; verified with in-app simulated accounts. Firestore security rules strictly block raw message fields. | [5-family-circle-modal.png](file:///c:/Users/User/Desktop/My_Apps/Wary/test-evidence/5-family-circle-modal.png) |
+
+---
+
 *Report prepared by Wary Development Team for #BuildHybridAI 2026 Hackathon.*
