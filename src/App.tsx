@@ -25,10 +25,15 @@ import {
   getReEntry,
   processPendingSyncQueue,
   seedInitialMarginProject,
+  setActiveUserContext,
 } from './services/marginRepository';
 import { generateRelayBriefing, generateReEntryBriefing } from './services/marginAI';
 import { checkOnDeviceHardware } from './services/aiProofService';
-import { subscribeToAuthChanges, signInAsGuest } from './services/authService';
+import {
+  subscribeToAuthChanges,
+  createLocalGuestAuthor,
+  type AuthLifecycleState,
+} from './services/authService';
 import { isFirebaseConfigured } from './services/firebaseConfig';
 import type {
   Space,
@@ -51,12 +56,9 @@ export function App() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [reEntryCache, setReEntryCache] = useState<Record<string, ReEntryBriefing>>({});
 
-  // Active User Profile
-  const [currentUser, setCurrentUser] = useState<RecordAuthor>({
-    id: 'user-lead',
-    name: 'Sarah Chen',
-    email: 'sarah.chen@margin.app',
-  });
+  // Active User Profile & Auth Lifecycle
+  const [currentUser, setCurrentUser] = useState<RecordAuthor | null>(null);
+  const [authLifecycle, setAuthLifecycle] = useState<AuthLifecycleState>('loading');
 
   // Modal States
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
@@ -70,9 +72,12 @@ export function App() {
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'local' | 'error'>('synced');
   const [hasOnDeviceAI, setHasOnDeviceAI] = useState(false);
 
+  // Effective author for data binding (guarantees non-null author with explicit guest attribution)
+  const effectiveUser: RecordAuthor = currentUser || createLocalGuestAuthor();
+
   // Load Initial Repository Data
-  const loadData = useCallback(async () => {
-    await seedInitialMarginProject();
+  const loadData = useCallback(async (authorOverride?: RecordAuthor) => {
+    await seedInitialMarginProject(authorOverride || undefined);
     const [sp, rec, rel, act] = await Promise.all([
       getSpaces(),
       getRecords(),
@@ -100,27 +105,35 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
-    void (async () => {
-      await loadData();
+    let unsubscribeAuth: (() => void) | null = null;
 
-      // Subscribe to real Firebase Auth
-      if (isFirebaseConfigured) {
-        subscribeToAuthChanges(async (authAuthor) => {
-          if (!mounted) return;
-          if (authAuthor) {
-            setCurrentUser(authAuthor);
-          } else {
-            // Auto-sign in as guest if no session exists so Firestore auth checks succeed
-            try {
-              const guest = await signInAsGuest();
-              if (mounted) setCurrentUser(guest);
-            } catch (authErr) {
-              console.warn('[MARGIN Auth] Anonymous sign-in deferred:', authErr);
-            }
-          }
-        });
-      }
-    })();
+    if (isFirebaseConfigured) {
+      unsubscribeAuth = subscribeToAuthChanges((authAuthor, _rawUser, state) => {
+        if (!mounted) return;
+        if (authAuthor) {
+          setActiveUserContext(authAuthor.id);
+          setCurrentUser(authAuthor);
+          setAuthLifecycle(state);
+          void loadData(authAuthor);
+        } else {
+          // Genuinely unauthenticated: isolate to guest scope
+          const guest = createLocalGuestAuthor();
+          setActiveUserContext(guest.id);
+          setCurrentUser(guest);
+          setAuthLifecycle('unauthenticated');
+          void loadData(guest);
+        }
+      });
+    } else {
+      queueMicrotask(() => {
+        if (!mounted) return;
+        const guest = createLocalGuestAuthor();
+        setActiveUserContext(guest.id);
+        setCurrentUser(guest);
+        setAuthLifecycle('local_guest');
+        void loadData(guest);
+      });
+    }
 
     const handleOnline = () => {
       setIsOnline(true);
@@ -146,6 +159,9 @@ export function App() {
 
     return () => {
       mounted = false;
+      if (unsubscribeAuth) {
+        unsubscribeAuth();
+      }
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('keydown', handleKeyDown);
@@ -156,35 +172,35 @@ export function App() {
   const handleSaveRecord = async (newRec: MarginRecord, reason?: string) => {
     setSyncStatus('syncing');
     await saveRecord(newRec, reason);
-    await loadData();
+    await loadData(effectiveUser);
     setSyncStatus('synced');
   };
 
   const handleArchiveRecord = async (recordId: string) => {
     if (!activeSpaceId) return;
-    await deleteRecord(recordId, activeSpaceId, currentUser);
-    await loadData();
+    await deleteRecord(recordId, activeSpaceId, effectiveUser);
+    await loadData(effectiveUser);
   };
 
   const handleSaveRelationship = async (rel: RecordRelationship) => {
-    await saveRelationship(rel, currentUser);
-    await loadData();
+    await saveRelationship(rel, effectiveUser);
+    await loadData(effectiveUser);
   };
 
   const handleCreateSpace = async (newSpace: Space) => {
     await saveSpace(newSpace);
-    await loadData();
+    await loadData(effectiveUser);
     setActiveSpaceId(newSpace.id);
   };
 
   const handleRenameSpace = async (spaceId: string, newName: string, newDesc?: string) => {
     await renameSpace(spaceId, newName, newDesc);
-    await loadData();
+    await loadData(effectiveUser);
   };
 
   const handleArchiveSpace = async (spaceId: string) => {
     await archiveSpace(spaceId);
-    await loadData();
+    await loadData(effectiveUser);
   };
 
   // Launch Relay Briefing
@@ -193,7 +209,7 @@ export function App() {
     if (!spaceObj) return;
 
     const spaceRecords = records.filter((r) => r.spaceId === spaceId);
-    const briefing = await generateRelayBriefing(spaceObj.name, spaceRecords, currentUser);
+    const briefing = await generateRelayBriefing(spaceObj.name, spaceRecords, effectiveUser);
     await saveRelayBriefing(briefing);
     setActiveRelay(briefing);
   };
@@ -221,7 +237,7 @@ export function App() {
         }}
         onOpenCapture={() => setIsCaptureOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        currentUser={currentUser}
+        currentUser={effectiveUser}
         isOnline={!isSimulatedOffline && isOnline}
         syncStatus={syncStatus}
         hasOnDeviceAI={hasOnDeviceAI}
@@ -229,13 +245,28 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 md:ml-64 pb-20 md:pb-8 pt-4 md:pt-6 overflow-y-auto">
+        {/* Unauthenticated / Local Sandbox Notice */}
+        {(authLifecycle === 'unauthenticated' || effectiveUser.isGuest) && (
+          <div className="bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg p-3 mx-4 md:mx-8 mb-4 flex items-center justify-between text-xs text-[#56554D]">
+            <span>
+              <strong>Local Sandbox Mode:</strong> You are browsing in an isolated local session. Data is private to this browser.
+            </span>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="px-2.5 py-1 bg-[#252620] text-[#F6F5F0] rounded text-xs font-medium hover:bg-[#3D3E35] shrink-0"
+            >
+              Sign In
+            </button>
+          </div>
+        )}
+
         {/* Workspace View if Space Selected */}
         {activeSpaceId && currentWorkspace ? (
           <SpaceWorkspace
             space={currentWorkspace}
             records={records.filter((r) => r.spaceId === activeSpaceId)}
             relationships={relationships.filter((r) => r.spaceId === activeSpaceId)}
-            currentUser={currentUser}
+            currentUser={effectiveUser}
             onBack={() => setActiveSpaceId(null)}
             onOpenCapture={() => setIsCaptureOpen(true)}
             onLaunchRelay={() => handleLaunchRelay(activeSpaceId)}
@@ -252,7 +283,7 @@ export function App() {
               <HomeScreen
                 spaces={spaces}
                 recentRecords={records}
-                currentUser={currentUser}
+                currentUser={effectiveUser}
                 onOpenSpace={(id) => setActiveSpaceId(id)}
                 onOpenCapture={() => setIsCaptureOpen(true)}
                 onLaunchReEntry={handleLaunchReEntry}
@@ -265,7 +296,7 @@ export function App() {
               <SpacesScreen
                 spaces={spaces}
                 records={records}
-                currentUser={currentUser}
+                currentUser={effectiveUser}
                 onOpenSpace={(id) => setActiveSpaceId(id)}
                 onCreateSpace={handleCreateSpace}
                 onLaunchRelay={handleLaunchRelay}
@@ -299,7 +330,7 @@ export function App() {
         onSaveRecord={handleSaveRecord}
         spaces={spaces}
         activeSpaceId={activeSpaceId || spaces[0]?.id}
-        currentUser={currentUser}
+        currentUser={effectiveUser}
       />
 
       {activeRelay && currentWorkspace && (
@@ -330,8 +361,7 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        currentUser={currentUser}
-        onSwitchUser={setCurrentUser}
+        currentUser={effectiveUser}
         isSimulatedOffline={isSimulatedOffline}
         onToggleSimulatedOffline={() => setIsSimulatedOffline(!isSimulatedOffline)}
       />

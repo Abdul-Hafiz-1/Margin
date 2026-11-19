@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "test:rules": "npx firebase-tools emulators:exec --only firestore \"vitest run src/services/firestore.rules.test.ts\" --project waryapp",
     "eval": "vitest run src/eval/eval.test.ts",
     "preview": "vite preview"
   },
@@ -22,6 +23,7 @@
     "vite-plugin-pwa": "^2.0.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",

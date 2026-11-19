@@ -48,3 +48,16 @@ This document details verified operational boundaries, environment prerequisites
 ### Status: Implemented via Firestore Pull/Push
 - **Current Architecture:** Margin persists state to IndexedDB with automatic cloud synchronization to Cloud Firestore whenever online.
 - **Future Enhancement:** While space records are synchronized on save, true real-time multi-cursor collaboration via `onSnapshot` listeners across simultaneous editors in the same space can be added as a subsequent layer over the existing `marginRepository`.
+
+---
+
+## 5. Production Security Rules Deployment Authorization Gate
+
+### Status: Verified in Emulator, Pending User Authorization for Deploy
+- **Implementation:** `firestore.rules` has been updated with hierarchical owner/editor/viewer checks, immutable provenance guards, and cross-space containment.
+- **Verification:** All 8 security boundary scenarios passed 100% in `src/services/firestore.rules.test.ts` via `npm run test:rules`.
+- **Deployment Status:** In strict compliance with user constraint (*"Do not deploy rules without explicit authorization"*), updated security rules have **not** been pushed to the live Firebase production project (`waryapp`).
+- **Deployment Command (Ready upon authorization):**
+  ```bash
+  npx firebase-tools deploy --only firestore:rules --project waryapp
+  ```

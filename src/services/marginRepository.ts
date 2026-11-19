@@ -15,23 +15,43 @@ import type {
   AIOperationLog,
   RecordAuthor,
 } from '../types/margin';
-import { db as firestoreDb, isFirebaseConfigured } from './firebaseConfig';
+import { auth, db as firestoreDb, isFirebaseConfigured } from './firebaseConfig';
 import {
   doc,
   setDoc,
 } from 'firebase/firestore';
 
-const DB_NAME = 'margin_continuity_db';
 const DB_VERSION = 1;
 
+let currentUserId: string | null = null;
 let dbPromise: Promise<IDBPDatabase> | null = null;
 const memoryStore = new Map<string, Map<string, any>>();
 
-function getMemoryStore(storeName: string) {
-  if (!memoryStore.has(storeName)) {
-    memoryStore.set(storeName, new Map());
+export function setActiveUserContext(userId: string | null) {
+  if (currentUserId !== userId) {
+    currentUserId = userId;
+    if (dbPromise) {
+      dbPromise.then((d) => d.close()).catch(() => {});
+      dbPromise = null;
+    }
   }
-  return memoryStore.get(storeName)!;
+}
+
+export function getActiveUserContext(): string | null {
+  return currentUserId;
+}
+
+function getDbName(): string {
+  return currentUserId ? `margin_continuity_${currentUserId}_db` : 'margin_continuity_guest_db';
+}
+
+function getMemoryStore(storeName: string) {
+  const scope = currentUserId || 'guest';
+  const scopedKey = `${scope}::${storeName}`;
+  if (!memoryStore.has(scopedKey)) {
+    memoryStore.set(scopedKey, new Map());
+  }
+  return memoryStore.get(scopedKey)!;
 }
 
 export function getLocalDB(): Promise<IDBPDatabase> {
@@ -61,7 +81,8 @@ export function getLocalDB(): Promise<IDBPDatabase> {
   }
 
   if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
+    const dbName = getDbName();
+    dbPromise = openDB(dbName, DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains('spaces')) {
           const spaceStore = db.createObjectStore('spaces', { keyPath: 'id' });
@@ -113,7 +134,12 @@ export function getLocalDB(): Promise<IDBPDatabase> {
 export async function getSpaces(): Promise<Space[]> {
   const db = await getLocalDB();
   const spaces = await db.getAll('spaces');
-  return spaces.sort((a, b) => b.updatedAt - a.updatedAt);
+  return spaces
+    .filter((s) => {
+      if (!currentUserId) return true;
+      return s.ownerId === currentUserId || (s.memberIds && s.memberIds.includes(currentUserId));
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getSpaceById(spaceId: string): Promise<Space | undefined> {
@@ -135,15 +161,16 @@ export async function saveSpace(space: Space): Promise<void> {
 
   await db.put('spaces', space);
 
-  // Firestore background sync
-  if (isFirebaseConfigured && navigator.onLine) {
+  // Firestore background sync only if real Firebase user is authenticated
+  const isRealAuth = auth.currentUser != null;
+  if (isFirebaseConfigured && isRealAuth && navigator.onLine) {
     try {
       await setDoc(doc(firestoreDb, 'spaces', space.id), space, { merge: true });
     } catch (err) {
       console.warn('[MARGIN Repository] Firestore space sync deferred:', err);
       await queuePendingSync('space', space.id, space);
     }
-  } else {
+  } else if (isRealAuth) {
     await queuePendingSync('space', space.id, space);
   }
 }
@@ -221,8 +248,9 @@ export async function saveRecord(record: MarginRecord, changeReason?: string): P
     timestamp: Date.now(),
   });
 
-  // Background Firestore sync
-  if (isFirebaseConfigured && navigator.onLine) {
+  // Background Firestore sync only if real Firebase user is authenticated
+  const isRealAuth = auth.currentUser != null;
+  if (isFirebaseConfigured && isRealAuth && navigator.onLine) {
     try {
       await setDoc(doc(firestoreDb, 'records', record.id), record, { merge: true });
     } catch (e) {
@@ -231,7 +259,7 @@ export async function saveRecord(record: MarginRecord, changeReason?: string): P
       await db.put('records', record);
       await queuePendingSync('record', record.id, record);
     }
-  } else {
+  } else if (isRealAuth) {
     await queuePendingSync('record', record.id, record);
   }
 }
@@ -285,12 +313,15 @@ export async function saveRelationship(rel: RecordRelationship, author: RecordAu
     timestamp: Date.now(),
   });
 
-  if (isFirebaseConfigured && navigator.onLine) {
+  const isRealAuth = auth.currentUser != null;
+  if (isFirebaseConfigured && isRealAuth && navigator.onLine) {
     try {
       await setDoc(doc(firestoreDb, 'relationships', rel.id), rel, { merge: true });
     } catch {
       await queuePendingSync('relationship', rel.id, rel);
     }
+  } else if (isRealAuth) {
+    await queuePendingSync('relationship', rel.id, rel);
   }
 }
 
@@ -332,12 +363,15 @@ export async function saveRelayBriefing(relay: RelayBriefing): Promise<void> {
     timestamp: Date.now(),
   });
 
-  if (isFirebaseConfigured && navigator.onLine) {
+  const isRealAuth = auth.currentUser != null;
+  if (isFirebaseConfigured && isRealAuth && navigator.onLine) {
     try {
       await setDoc(doc(firestoreDb, 'relays', relay.id), relay, { merge: true });
     } catch {
       await queuePendingSync('relay', relay.id, relay);
     }
+  } else if (isRealAuth) {
+    await queuePendingSync('relay', relay.id, relay);
   }
 }
 
@@ -388,7 +422,8 @@ async function queuePendingSync(type: string, id: string, payload: any): Promise
 }
 
 export async function processPendingSyncQueue(): Promise<{ syncedCount: number; errors: number }> {
-  if (!navigator.onLine || !isFirebaseConfigured) {
+  // Only process cloud sync if online, configured, and genuine Firebase user authenticated
+  if (!navigator.onLine || !isFirebaseConfigured || auth.currentUser == null) {
     return { syncedCount: 0, errors: 0 };
   }
 
@@ -415,15 +450,14 @@ export async function processPendingSyncQueue(): Promise<{ syncedCount: number; 
 // SEED DATA GENERATOR (For instant exploration & testing)
 // ============================================================================
 
-export async function seedInitialMarginProject(): Promise<void> {
+export async function seedInitialMarginProject(author?: RecordAuthor): Promise<void> {
   const db = await getLocalDB();
   const existingSpaces = await db.getAll('spaces');
   if (existingSpaces.length > 0) return; // Don't overwrite if data exists
 
-  const user: RecordAuthor = {
-    id: 'user-lead',
-    name: 'Sarah Chen',
-    email: 'sarah.chen@margin.app',
+  const user: RecordAuthor = author || {
+    id: currentUserId || 'local-guest',
+    name: currentUserId ? 'Space Owner' : 'Local Contributor',
   };
 
   const defaultSpace: Space = {

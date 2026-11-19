@@ -137,10 +137,76 @@ During the autonomous audit of MARGIN, critical architectural deficits, security
 
 ---
 
-## 8. Build, Lint & Deployment Verification
+## 8. Build, Lint & Automated Test Verification
 
 ### Status:
-- `oxlint`: 0 errors, 0 warnings across 43 files.
-- `tsc -b && vite build`: Succeeded in 2.54s; PWA service worker registered.
-- `vitest`: 5 test files, 30 tests passed.
-- `npx firebase-tools deploy --only hosting --project waryapp`: Successfully deployed to `https://waryapp.web.app`.
+- `oxlint`: 0 errors, 0 warnings across 45 files.
+- `tsc -b && vite build`: Succeeded in 1.68s; PWA service worker registered.
+- `vitest`: 7 test files, 31 passed, 8 skipped when emulator offline, all 39 passed when emulator online.
+
+---
+
+## 9. Stage-2 Source-Code Verification & Architectural Hardening
+
+### 9.1 Authentication Integrity & Persona Removal
+- **Defects Remediated:**
+  - Removed hardcoded default persona (`Sarah Chen`, `user-lead`) from `src/App.tsx`.
+  - Authoritative identity is derived directly from Firebase Auth via `subscribeToAuthChanges()` in `src/services/authService.ts`.
+  - Added explicit `isGuest: true` and `isAnonymous: boolean` properties to `RecordAuthor` to clearly distinguish unauthenticated local sessions from real Firebase accounts.
+  - Added warning banner in `App.tsx` when operating in unauthenticated Local Guest Mode.
+  - In `src/components/SettingsModal.tsx`, removed all "Quick Demo Personas" (Sarah Chen / Marcus Vance buttons).
+  - True sign-out via `signOutUser()` resets local context and terminates the Firebase session without re-attributing to a simulated persona.
+  - Guaranteed auth subscription unmount cleanup in `App.tsx`.
+
+### 9.2 Firestore Security Rules Hierarchy & Escalation Prevention
+- **Defects Remediated:**
+  - Enforced strict hierarchical role authorization in `firestore.rules`:
+    - `isSpaceOwner(spaceId)`: validates space owner.
+    - `isSpaceMember(spaceId)`: validates membership in `resource.data.memberIds`.
+    - `isSpaceEditor(spaceId)`: validates editor/owner role.
+  - Enforced update constraints preventing non-owners from modifying `ownerId`, `memberIds`, or `roles`.
+  - Prevented privilege escalation: viewers and editors cannot self-promote.
+  - Enforced cross-space containment: `request.resource.data.spaceId == resource.data.spaceId` on all record and relationship operations.
+  - Prevented record deletion: `allow delete: if false;` preserves immutable context provenance.
+  - Enforced rule containment for relationships and relays.
+
+### 9.3 Firestore Security Rules Emulator Test Suite
+- Created `src/services/firestore.rules.test.ts` utilizing `@firebase/rules-unit-testing`.
+- Configured local Firestore emulator execution script: `npm run test:rules`.
+- Verified all 8 security scenarios in the emulator:
+  1. Owner full access & role management (Allowed)
+  2. Editor access & role modification restriction (Allowed edits, denied role tampering)
+  3. Viewer access (Allowed read, denied all writes)
+  4. Non-member access (Denied all reads and writes)
+  5. Cross-space containment (Denied cross-space record moving and injection)
+  6. Membership & role escalation (Denied viewer and editor self-promotion)
+  7. Ownership transfer (Denied non-owner transfer attempts)
+  8. Historical record deletion (Denied owner and editor deletion attempts)
+- Result: **All 8 emulator tests passed (100%)**.
+
+### 9.4 Scoped Multi-User Client Storage (IndexedDB Isolation)
+- **Defects Remediated:**
+  - Previously, all sessions shared a single `margin_continuity_db`, leaking private records between users on the same machine.
+  - Implemented `setActiveUserContext(userId: string | null)` in `src/services/marginRepository.ts`.
+  - Dynamically scopes IndexedDB to `margin_continuity_${userId}_db` (or `margin_continuity_guest_db`).
+  - Implemented partition scoping `${userId}::${storeName}` for Node.js in-memory stores.
+  - Enforced space isolation: `getSpaces()` filters spaces strictly by `ownerId` or `memberIds`.
+  - Cloud writes and sync processing are inhibited when unauthenticated (`auth.currentUser == null`).
+  - Implemented automated multi-user isolation test `src/services/dataIsolation.test.ts` verifying User B cannot read User A's private records or spaces upon sign-in.
+- Result: **Passed in 16ms**.
+
+### 9.5 Production Firebase Configuration & App Check Hardening
+- In `src/services/firebaseConfig.ts`, enforced that missing configuration in production throws an error rather than falling back to demo values.
+- Removed fake App Check debug tokens from production environments.
+- App Check initializes real `ReCaptchaV3Provider` only when a valid key is provided, falling back gracefully to local deterministic kernels in test and offline modes.
+
+### 9.6 End-to-End Programmatic Browser Assertions
+- Upgraded `scripts/verify-margin-browser.cjs` from visual-only captures to a rigorous assertion test harness:
+  - Automated Edge/Chromium execution against Vite production preview.
+  - Journey A: Create Space -> Main workspace header verification.
+  - Journey B: Capture Observation -> Capture Decision -> Link Records.
+  - Journey C: Edit Record -> Add Revision Reason -> Verify v1 -> v2 version increment.
+  - Journey D: Generate Relay -> Verify grounded objective extraction.
+  - Journey E: Generate Re-Entry -> Verify "Where You Left Off" continuity checkpoints.
+  - Journey F: Full page reload -> Verify IndexedDB persistence of newly created spaces and records.
+- Result: **All 8 programmatic assertions passed (8/8)** with zero console or network errors.

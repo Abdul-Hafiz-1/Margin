@@ -2,9 +2,10 @@
  * MARGIN — Authentication Service
  * Wraps Firebase Auth with support for:
  * - Google OAuth popup sign-in
- * - Anonymous / Guest developer sign-in
- * - Sign out
- * - Auth state subscription
+ * - Anonymous / Guest sign-in (explicitly distinguished)
+ * - True sign-out with auth state transition
+ * - Auth state subscription with proper cleanup
+ * - Distinction between real Firebase sessions and local guest mode
  */
 
 import {
@@ -18,23 +19,36 @@ import {
 import { auth } from './firebaseConfig';
 import type { RecordAuthor } from '../types/margin';
 
+export type AuthLifecycleState = 'loading' | 'authenticated' | 'unauthenticated' | 'local_guest';
+
 export function userToRecordAuthor(user: User): RecordAuthor {
   return {
     id: user.uid,
-    name: user.displayName || (user.isAnonymous ? 'Guest Contributor' : user.email?.split('@')[0] || 'User'),
+    name: user.displayName || (user.isAnonymous ? 'Guest (Anonymous Session)' : user.email?.split('@')[0] || 'User'),
     email: user.email || undefined,
     avatarUrl: user.photoURL || undefined,
+    isAnonymous: user.isAnonymous,
+    isGuest: false,
+  };
+}
+
+export function createLocalGuestAuthor(): RecordAuthor {
+  return {
+    id: 'local-guest',
+    name: 'Local Guest (Unauthenticated)',
+    isAnonymous: false,
+    isGuest: true,
   };
 }
 
 export function subscribeToAuthChanges(
-  callback: (user: RecordAuthor | null, rawUser: User | null) => void
+  callback: (user: RecordAuthor | null, rawUser: User | null, state: AuthLifecycleState) => void
 ): () => void {
   return onAuthStateChanged(auth, (user) => {
     if (user) {
-      callback(userToRecordAuthor(user), user);
+      callback(userToRecordAuthor(user), user, 'authenticated');
     } else {
-      callback(null, null);
+      callback(null, null, 'unauthenticated');
     }
   });
 }

@@ -7,18 +7,16 @@ import {
   Play,
   LogIn,
   LogOut,
-  UserCheck,
 } from 'lucide-react';
 import { checkOnDeviceHardware, runAIProofOfConcept, type AIProofResult } from '../services/aiProofService';
 import { getAILogs, processPendingSyncQueue } from '../services/marginRepository';
-import { signInWithGoogle, signInAsGuest, signOutUser } from '../services/authService';
+import { signInWithGoogle, signOutUser } from '../services/authService';
 import type { AIOperationLog, RecordAuthor } from '../types/margin';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: RecordAuthor;
-  onSwitchUser: (newUser: RecordAuthor) => void;
   isSimulatedOffline: boolean;
   onToggleSimulatedOffline: () => void;
 }
@@ -27,7 +25,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   currentUser,
-  onSwitchUser,
   isSimulatedOffline,
   onToggleSimulatedOffline,
 }) => {
@@ -316,8 +313,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="space-y-4">
               <div className="p-4 bg-[#EFEEE8] border border-[#E5E3DA] rounded-lg space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-[#657C69] uppercase font-semibold">
-                    Active Identity & UID
+                  <span className={`text-[10px] font-mono uppercase font-semibold px-2 py-0.5 rounded ${
+                    currentUser.isGuest
+                      ? 'bg-[#FBF0EA] text-[#94532B]'
+                      : 'bg-[#EAF3EC] text-[#2E6B47]'
+                  }`}>
+                    {currentUser.isGuest ? 'Local Guest Mode (Unauthenticated)' : 'Firebase Authenticated Session'}
                   </span>
                   <span className="font-mono text-[10px] text-[#77766E] truncate max-w-[200px]">
                     UID: {currentUser.id}
@@ -326,18 +327,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <h3 className="font-serif text-lg font-medium text-[#252620]">
                   {currentUser.name}
                 </h3>
-                <p className="text-xs text-[#77766E]">{currentUser.email || 'Anonymous Guest Session'}</p>
+                <p className="text-xs text-[#77766E]">
+                  {currentUser.email || (currentUser.isGuest ? 'Isolated browser-local cache (no cloud sync)' : 'Anonymous Firebase UID')}
+                </p>
               </div>
 
               {/* Real Firebase Authentication Controls */}
               <div className="p-4 bg-[#FFFFFF] border border-[#E5E3DA] rounded-lg space-y-3">
-                <h4 className="font-medium text-[#252620]">Firebase Authentication:</h4>
-                <div className="flex flex-wrap gap-2">
+                <h4 className="font-medium text-[#252620]">Account & Authentication</h4>
+                <p className="text-xs text-[#77766E]">
+                  {currentUser.isGuest
+                    ? 'You are currently working in an isolated local-only sandbox. Sign in with Google to synchronize your Living Context with Firebase.'
+                    : 'Your session is authenticated with Firebase Auth. All data is scoped to your user ID.'}
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
                   <button
                     onClick={async () => {
                       try {
-                        const authed = await signInWithGoogle();
-                        onSwitchUser(authed);
+                        await signInWithGoogle();
                       } catch (err: any) {
                         alert(`Google Sign-In notice: ${err?.message || err}`);
                       }
@@ -345,79 +352,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#D5D2C7] rounded-md text-xs font-medium text-[#252620] hover:bg-[#F6F5F0]"
                   >
                     <LogIn className="w-3.5 h-3.5 text-[#657C69]" />
-                    <span>Sign in with Google</span>
+                    <span>{currentUser.isGuest ? 'Sign in with Google' : 'Switch Google Account'}</span>
                   </button>
 
-                  <button
-                    onClick={async () => {
-                      try {
-                        const guest = await signInAsGuest();
-                        onSwitchUser(guest);
-                      } catch (err: any) {
-                        alert(`Guest Sign-In notice: ${err?.message || err}`);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#D5D2C7] rounded-md text-xs font-medium text-[#252620] hover:bg-[#F6F5F0]"
-                  >
-                    <UserCheck className="w-3.5 h-3.5 text-[#2E6B47]" />
-                    <span>Continue as Guest</span>
-                  </button>
-
-                  <button
-                    onClick={async () => {
-                      await signOutUser();
-                      onSwitchUser({
-                        id: `guest-${Math.random().toString(36).substring(2, 7)}`,
-                        name: 'Signed Out User',
-                      });
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#E5E3DA] rounded-md text-xs font-medium text-[#77766E] hover:text-[#B87A4D]"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Persona Switcher for Quick Demos */}
-              <div className="space-y-2">
-                <h4 className="font-medium text-[#252620]">Quick Demo Personas:</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() =>
-                      onSwitchUser({
-                        id: 'user-lead',
-                        name: 'Sarah Chen',
-                        email: 'sarah.chen@margin.app',
-                      })
-                    }
-                    className={`p-2.5 rounded-lg border text-left text-xs ${
-                      currentUser.name === 'Sarah Chen'
-                        ? 'border-[#657C69] bg-[#E8EEE7] text-[#252620]'
-                        : 'border-[#E5E3DA] bg-[#FFFFFF] text-[#77766E]'
-                    }`}
-                  >
-                    <p className="font-medium text-[#252620]">Sarah Chen (Tech Lead)</p>
-                    <p className="text-[10px] text-[#77766E]">Owner of Project Apollo</p>
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      onSwitchUser({
-                        id: 'user-engineer',
-                        name: 'Marcus Vance',
-                        email: 'marcus.v@margin.app',
-                      })
-                    }
-                    className={`p-2.5 rounded-lg border text-left text-xs ${
-                      currentUser.name === 'Marcus Vance'
-                        ? 'border-[#657C69] bg-[#E8EEE7] text-[#252620]'
-                        : 'border-[#E5E3DA] bg-[#FFFFFF] text-[#77766E]'
-                    }`}
-                  >
-                    <p className="font-medium text-[#252620]">Marcus Vance (Staff SRE)</p>
-                    <p className="text-[10px] text-[#77766E]">Relay Receiver & Editor</p>
-                  </button>
+                  {!currentUser.isGuest && (
+                    <button
+                      onClick={async () => {
+                        await signOutUser();
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFFFFF] border border-[#E5E3DA] rounded-md text-xs font-medium text-[#77766E] hover:text-[#B87A4D]"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign Out</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

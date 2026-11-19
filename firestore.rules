@@ -6,6 +6,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSpaceOwner(spaceId) {
+      let space = get(/databases/$(database)/documents/spaces/$(spaceId));
+      return isAuthenticated() && space.data.ownerId == request.auth.uid;
+    }
+
     function isSpaceMember(spaceId) {
       let space = get(/databases/$(database)/documents/spaces/$(spaceId));
       return isAuthenticated() && (
@@ -18,25 +23,32 @@ service cloud.firestore {
       let space = get(/databases/$(database)/documents/spaces/$(spaceId));
       return isAuthenticated() && (
         space.data.ownerId == request.auth.uid ||
-        (space.data.roles != null && space.data.roles[request.auth.uid] in ['owner', 'editor']) ||
-        (space.data.memberIds != null && request.auth.uid in space.data.memberIds && space.data.roles == null)
+        (space.data.roles != null &&
+         space.data.roles[request.auth.uid] != null &&
+         space.data.roles[request.auth.uid] in ['owner', 'editor'])
       );
     }
 
     // SPACES COLLECTION
     match /spaces/{spaceId} {
-      allow read: if isAuthenticated() && (
-        resource.data.ownerId == request.auth.uid ||
-        (resource.data.memberIds != null && request.auth.uid in resource.data.memberIds)
-      );
+      allow read: if isSpaceMember(spaceId);
 
       allow create: if isAuthenticated() && (
         request.resource.data.ownerId == request.auth.uid
       );
 
+      // Ownership and Role Authorization:
+      // - Space owner can modify all fields, manage membership and transfer ownership.
+      // - Space editors can update content/description, but CANNOT alter ownerId, memberIds, or roles.
+      // - Space viewers CANNOT update space documents.
       allow update: if isAuthenticated() && (
-        resource.data.ownerId == request.auth.uid ||
-        (resource.data.memberIds != null && request.auth.uid in resource.data.memberIds)
+        (resource.data.ownerId == request.auth.uid) ||
+        (
+          isSpaceEditor(spaceId) &&
+          request.resource.data.ownerId == resource.data.ownerId &&
+          request.resource.data.memberIds == resource.data.memberIds &&
+          request.resource.data.roles == resource.data.roles
+        )
       );
 
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
@@ -45,24 +57,31 @@ service cloud.firestore {
     // RECORDS COLLECTION (Living Context Engine)
     match /records/{recordId} {
       allow read: if isSpaceMember(resource.data.spaceId);
-      allow create: if isSpaceEditor(request.resource.data.spaceId);
-      allow update: if isSpaceEditor(resource.data.spaceId);
-      allow delete: if false; // Preserves immutable historical provenance
+      allow create: if isSpaceEditor(request.resource.data.spaceId) &&
+                       request.resource.data.author.id == request.auth.uid;
+      allow update: if isSpaceEditor(resource.data.spaceId) &&
+                       request.resource.data.spaceId == resource.data.spaceId;
+      allow delete: if false; // Strict historical provenance: records are immutable/archived only
     }
 
     // RELATIONSHIPS COLLECTION
     match /relationships/{relId} {
       allow read: if isSpaceMember(resource.data.spaceId);
       allow create: if isSpaceEditor(request.resource.data.spaceId);
-      allow update: if isSpaceEditor(resource.data.spaceId);
+      allow update: if isSpaceEditor(resource.data.spaceId) &&
+                       request.resource.data.spaceId == resource.data.spaceId;
       allow delete: if isSpaceEditor(resource.data.spaceId);
     }
 
     // RELAYS COLLECTION
     match /relays/{relayId} {
       allow read: if isSpaceMember(resource.data.spaceId);
-      allow create, update: if isSpaceEditor(request.resource.data.spaceId);
-      allow delete: if isAuthenticated() && resource.data.createdBy.id == request.auth.uid;
+      allow create: if isSpaceEditor(request.resource.data.spaceId) &&
+                       request.resource.data.createdBy.id == request.auth.uid;
+      allow update: if isSpaceEditor(resource.data.spaceId) &&
+                       request.resource.data.spaceId == resource.data.spaceId;
+      allow delete: if isSpaceOwner(resource.data.spaceId) ||
+                       (isSpaceEditor(resource.data.spaceId) && resource.data.createdBy.id == request.auth.uid);
     }
 
     // Default deny all other paths

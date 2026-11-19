@@ -23,6 +23,8 @@ export interface RecordAuthor {
   name: string;
   email?: string;
   avatarUrl?: string;
+  isAnonymous?: boolean;
+  isGuest?: boolean;
 }
 
 export interface RecordVersionHistory {
